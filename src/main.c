@@ -32,6 +32,10 @@ LOG_MODULE_REGISTER(mender_app, LOG_LEVEL_DBG);
 #include "modules/noop-update-module.h"
 #endif /* CONFIG_MENDER_APP_NOOP_UPDATE_MODULE */
 
+/* For generating random mac address */
+#include <zephyr/random/random.h>
+#include <mender/mac_address.h>
+
 static mender_err_t
 network_connect_cb(void) {
     LOG_DBG("network_connect_cb");
@@ -72,13 +76,41 @@ get_identity_cb(const mender_identity_t **identity) {
     return MENDER_FAIL;
 }
 
+void generate_random_mac_address() {
+    char new_mac_address[6] = {0};
+    sys_rand_get(new_mac_address, 6);
+    for (int i = 0; i < 6; i++) {
+        sprintf(mac_address + i * 3, "%02x", (unsigned char)new_mac_address[i]);
+        if (i < 5) {
+            mac_address[i * 3 + 2] = ':';
+        }
+    }
+}
+
 int
 main(void) {
     printf("Hello World! %s\n", CONFIG_BOARD_TARGET);
 
     netup_wait_for_network();
 
-    netup_get_mac_address(mender_identity.value);
+    mender_err_t ret;
+
+    /* generate random mac-address and store it in the nvs */
+    mender_storage_init();
+    char *stored_mac_address = NULL;
+    if (MENDER_OK != (ret = mender_storage_get_mac_address(&stored_mac_address))) {
+        if (MENDER_NOT_FOUND == ret) {
+            generate_random_mac_address();
+            if (MENDER_FAIL == (ret = mender_storage_set_mac_address(mender_identity.value))) {
+                goto END;
+            }
+        } else {
+            LOG_ERR("Failed to get mac address from nvs");
+            goto END;
+        }
+    } else {
+        mender_identity.value = stored_mac_address;
+    }
 
     certs_add_credentials();
 
