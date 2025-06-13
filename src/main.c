@@ -15,44 +15,54 @@
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(mender_app, LOG_LEVEL_DBG);
 
+#include "utils/callbacks.h"
 #include "utils/netup.h"
 #include "utils/certs.h"
 
 #include <zephyr/kernel.h>
 #include <zephyr/sys/reboot.h>
 
-#include "mender-client.h"
-#include "mender-inventory.h"
-#include "mender-flash.h"
+#include <mender/utils.h>
+#include <mender/client.h>
+#include <mender/inventory.h>
+
+#ifdef BUILD_INTEGRATION_TESTS
+#include "modules/test-update-module.h"
+#include "test_definitions.h"
+#endif /* BUILD_INTEGRATION_TESTS */
 
 #ifdef CONFIG_MENDER_ZEPHYR_IMAGE_UPDATE_MODULE
-#include "mender-zephyr-image-update-module.h"
+#include <mender/zephyr-image-update-module.h>
 #endif /* CONFIG_MENDER_ZEPHYR_IMAGE_UPDATE_MODULE */
 
 #ifdef CONFIG_MENDER_APP_NOOP_UPDATE_MODULE
 #include "modules/noop-update-module.h"
 #endif /* CONFIG_MENDER_APP_NOOP_UPDATE_MODULE */
 
-static mender_err_t
-network_connect_cb(void) {
+#ifdef CONFIG_MENDER_CLIENT_INVENTORY_DISABLE
+#error Mender MCU integration app requires the inventory feature
+#endif /* CONFIG_MENDER_CLIENT_INVENTORY_DISABLE */
+
+MENDER_FUNC_WEAK mender_err_t
+mender_network_connect_cb(void) {
     LOG_DBG("network_connect_cb");
     return MENDER_OK;
 }
 
-static mender_err_t
-network_release_cb(void) {
+MENDER_FUNC_WEAK mender_err_t
+mender_network_release_cb(void) {
     LOG_DBG("network_release_cb");
     return MENDER_OK;
 }
 
-static mender_err_t
-deployment_status_cb(mender_deployment_status_t status, char *desc) {
+MENDER_FUNC_WEAK mender_err_t
+mender_deployment_status_cb(mender_deployment_status_t status, const char *desc) {
     LOG_DBG("deployment_status_cb: %s", desc);
     return MENDER_OK;
 }
 
-static mender_err_t
-restart_cb(void) {
+MENDER_FUNC_WEAK mender_err_t
+mender_restart_cb(void) {
     LOG_DBG("restart_cb");
 
     sys_reboot(SYS_REBOOT_WARM);
@@ -63,14 +73,22 @@ restart_cb(void) {
 static char              mac_address[18] = { 0 };
 static mender_identity_t mender_identity = { .name = "mac", .value = mac_address };
 
-static mender_err_t
-get_identity_cb(mender_identity_t **identity) {
+MENDER_FUNC_WEAK mender_err_t
+mender_get_identity_cb(const mender_identity_t **identity) {
     LOG_DBG("get_identity_cb");
     if (NULL != identity) {
         *identity = &mender_identity;
         return MENDER_OK;
     }
     return MENDER_FAIL;
+}
+
+static mender_err_t
+persistent_inventory_cb(mender_keystore_t **keystore, uint8_t *keystore_len) {
+    static mender_keystore_t inventory[] = { { .name = "App", .value = "mender-mcu-integration" } };
+    *keystore                            = inventory;
+    *keystore_len                        = 1;
+    return MENDER_OK;
 }
 
 int
@@ -83,45 +101,63 @@ main(void) {
 
     certs_add_credentials();
 
-    LOG_INF("Initializing Mender Client with:");
-    LOG_INF("   Device type:   '%s'", CONFIG_MENDER_DEVICE_TYPE);
-    LOG_INF("   Identity:      '{\"%s\": \"%s\"}'", mender_identity.name, mender_identity.value);
-
     /* Initialize mender-client */
-    mender_client_config_t    mender_client_config    = { .device_type = NULL, .recommissioning = false };
-    mender_client_callbacks_t mender_client_callbacks = { .network_connect        = network_connect_cb,
-                                                          .network_release        = network_release_cb,
-                                                          .deployment_status      = deployment_status_cb,
-                                                          .restart                = restart_cb,
-                                                          .get_identity           = get_identity_cb,
+    mender_client_config_t    mender_client_config    = { .device_type = CONFIG_MENDER_DEVICE_TYPE, .recommissioning = false };
+    mender_client_callbacks_t mender_client_callbacks = { .network_connect        = mender_network_connect_cb,
+                                                          .network_release        = mender_network_release_cb,
+                                                          .deployment_status      = mender_deployment_status_cb,
+                                                          .restart                = mender_restart_cb,
+                                                          .get_identity           = mender_get_identity_cb,
                                                           .get_user_provided_keys = NULL };
 
-    assert(MENDER_OK == mender_client_init(&mender_client_config, &mender_client_callbacks));
+    LOG_INF("Initializing Mender Client with:");
+    LOG_INF("   Device type:   '%s'", mender_client_config.device_type);
+    LOG_INF("   Identity:      '{\"%s\": \"%s\"}'", mender_identity.name, mender_identity.value);
+
+    if (MENDER_OK != mender_client_init(&mender_client_config, &mender_client_callbacks)) {
+        LOG_ERR("Failed to initialize the client");
+        goto END;
+    }
     LOG_INF("Mender client initialized");
 
 #ifdef CONFIG_MENDER_ZEPHYR_IMAGE_UPDATE_MODULE
-    assert(MENDER_OK == mender_zephyr_image_register_update_module());
+    if (MENDER_OK != mender_zephyr_image_register_update_module()) {
+        LOG_ERR("Failed to register the zephyr-image Update Module");
+        goto END;
+    }
     LOG_INF("Update Module 'zephyr-image' initialized");
 #endif /* CONFIG_MENDER_ZEPHYR_IMAGE_UPDATE_MODULE */
 
 #ifdef CONFIG_MENDER_APP_NOOP_UPDATE_MODULE
-    assert(MENDER_OK == noop_update_module_register());
+    if (MENDER_OK != noop_update_module_register()) {
+        LOG_ERR("Failed to register the noop Update Module");
+        goto END;
+    }
     LOG_INF("Update Module 'noop-update' initialized");
 #endif /* CONFIG_MENDER_APP_NOOP_UPDATE_MODULE */
 
-#ifdef CONFIG_MENDER_CLIENT_ADD_ON_INVENTORY
-    mender_keystore_t inventory[] = { { .name = "demo", .value = "demo" }, { .name = "foo", .value = "bar" }, { .name = NULL, .value = NULL } };
-    assert(MENDER_OK == mender_inventory_set(inventory));
-    LOG_INF("Mender inventory set");
-#endif /* CONFIG_MENDER_CLIENT_ADD_ON_INVENTORY */
+#ifdef BUILD_INTEGRATION_TESTS
+    if (MENDER_OK != test_update_module_register()) {
+        LOG_ERR("Failed to register the test Update Module");
+        goto END;
+    }
+    LOG_INF("Update Module 'test-update' initialized");
+#endif /* BUILD_INTEGRATION_TESTS */
+
+    if (MENDER_OK != mender_inventory_add_callback(persistent_inventory_cb, true)) {
+        LOG_ERR("Failed to add inventory callback");
+        goto END;
+    }
+    LOG_INF("Mender inventory callback added");
 
     /* Finally activate mender client */
     if (MENDER_OK != mender_client_activate()) {
-        LOG_ERR("Unable to activate mender-client");
-    } else {
-        LOG_INF("Mender client activated and running!");
+        LOG_ERR("Unable to activate the client");
+        goto END;
     }
+    LOG_INF("Mender client activated and running!");
 
+END:
     k_sleep(K_FOREVER);
 
     return 0;

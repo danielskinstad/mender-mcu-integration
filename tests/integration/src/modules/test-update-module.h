@@ -21,7 +21,7 @@ extern "C" {
 
 #include <mender/utils.h>
 
-mender_err_t noop_update_module_register(void);
+mender_err_t test_update_module_register(void);
 
 #ifdef __cplusplus
 }

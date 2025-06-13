@@ -1,4 +1,4 @@
-[![Build Status](https://gitlab.com/Northern.tech/Mender/mender-mcu-integration/badges/next/pipeline.svg)](https://gitlab.com/Northern.tech/Mender/mender-mcu-integration/pipelines)
+[![Build Status](https://gitlab.com/Northern.tech/Mender/mender-mcu-integration/badges/main/pipeline.svg)](https://gitlab.com/Northern.tech/Mender/mender-mcu-integration/pipelines)
 
 # mender-mcu-integration
 
@@ -17,36 +17,123 @@ Zephyr Module, with configurations for some boards to choose from.
 ![Mender logo](https://github.com/mendersoftware/mender/raw/master/mender_logo.png)
 
 
-## Project Status
+## Get started
 
-This repository is a work in progress. As we continue development, features and functionality may
-evolve significantly.
-
-
-## Getting started
-
-Since the project is under active development, we recommend watching the repository or checking back
-regularly for updates. Detailed documentation and usage instructions will be provided as the project
-progresses.
-
-To start using Mender, we recommend that you begin with the Getting started
-section in [the Mender documentation](https://docs.mender.io/).
+To get started with Mender for Microcontrollers, visit [Mender documentation](https://docs.mender.io/get-started/microcontroller-preview).
 
 
-## Building the Zephyr Project Mender reference app
+## Build the Zephyr Project Mender reference app for ESP32-S3-DevKitC and hosted Mender
 
 Initialize a Zephyr workspace based on this repository's manifest, which will pull Mender MCU code
 and its dependencies:
-
 ```
 west init workspace --manifest-url https://github.com/mendersoftware/mender-mcu-integration
-cd workspace && west update
+cd workspace && west update && west blobs fetch hal_espressif
 ```
 
-To built the project, you need a board that supports MCU boot. The following link will filter
+You need your hosted Mender Tenant token and local WiFi SSID and password. Set these as environment variables:
+```
+WIFI_SSID="<Paste your local WiFi SSID here>"
+WIFI_PASS="<Paste your local WiFi password here>"
+TENANT_TOKEN="<Paste your hosted Mender tenant token here>"
+ARTIFACT_NAME="release-1"
+```
+
+Plug your ESP32-S3 into your computer. Build and flash the bootloader and the application with the following command:
+```
+west build \
+  --sysbuild mender-mcu-integration -- \
+  -DCONFIG_MENDER_APP_WIFI_SSID=\"$WIFI_SSID\" \
+  -DCONFIG_MENDER_APP_WIFI_PSK=\"$WIFI_PASS\" \
+  -DCONFIG_MENDER_SERVER_TENANT_TOKEN=\"$TENANT_TOKEN\" \
+  -DCONFIG_MENDER_ARTIFACT_NAME=\"$ARTIFACT_NAME\" && west flash
+```
+
+Log into your hosted Mender account and find your new device in the pending devices tab.
+
+Find the generated Mender Artifact at `build/mender-mcu-integration/zephyr/zephyr.mender`
+
+### Serial line output
+
+To monitor the device via serial line, execute:
+```
+west espressif monitor
+```
+
+### First time board setup
+
+Additionally, you might want to erase the whole flash so that the storage partition is clean. Use
+`python -m esptool --chip esp32-s3 erase_flash` for that. Find the vendor documentation
+[here](https://docs.espressif.com/projects/esptool/en/latest/esp32/esptool/basic-commands.html#erase-flash-erase-flash-erase-region)
+
+## Build the project for other boards
+
+This repository is primarily meant to demo Mender MCU with ESP32-S3. However, we have other
+integrations maintained by the community that can be used to get started with Mender MCU.
+
+In general, you need a board that supports MCU boot. The following link will filter
 the officially supported boards that also support MCU boot:
 
 * [Zephyr Project supported boards with MCU boot](https://docs.zephyrproject.org/latest/gsearch.html?q=MCUboot&check_keywords=yes&area=default#gsc.tab=0&gsc.q=MCUboot&gsc.ref=more%3Aboards&gsc.sort=)
+
+For boards that don't support MCU boot and use other bootloaders or other means to deliver an update, a custom
+update module needs to be written.
+
+Both for ESP32-S3 and for the other boards we use Zephyr OS Sysbuild (System build) to
+configure, compile and flash both the bootloader and the aplication. Read more about it at:
+
+* [Zephyr Project Sysbuild (System build)](https://docs.zephyrproject.org/latest/build/sysbuild/index.html)
+
+### Nordic Semiconductor nRF52840 DevKit + WIZnet W5500 Ethernet Shield
+
+See board support information an [Zephyr Project
+docs](https://docs.zephyrproject.org/latest/boards/nordic/nrf52840dk/doc/index.html). Follow the
+instructions there to install and configure all the necessary software for programming and
+debugging.
+
+The nRF52840 is a BLE board. For internet connectivity, we use a W5500 Ethernet Shield. See shield description in [WIZnet website](https://docs.wiznet.io/Product/Open-Source-Hardware/w5500_ethernet_shield)
+
+Build the project with:
+```
+west build \
+  --sysbuild \
+  --board nrf52840dk/nrf52840  \
+  mender-mcu-integration \
+  -- \
+  -DEXTRA_DTC_OVERLAY_FILE=boards/shields/wiznet_eth_w5500.overlay \
+  -DEXTRA_CONF_FILE=boards/shields/wiznet_eth_w5500.conf
+```
+
+Flash the two binaries to your board with:
+```
+west flash
+```
+
+The application should now start! You can monitor the serial line with:
+```
+minicom -D /dev/ttyACM1 -b 115200 -w
+```
+
+Once the bootloader is flashed, the next time you need to flash the application you can do it with:
+```
+west flash --domain mender-mcu-integration
+```
+
+##### Restarting the board
+
+To have a fresh start of the board, reset it with:
+```
+nrfjprog --reset
+```
+
+##### Debugging with gdb
+
+You can attach with `gdb` at any moment of the execution with:
+```
+west attach --domain mender-mcu-integration
+```
+
+Enjoy your debugging session!
 
 
 ### ESP32-Ethernet-Kit
@@ -54,12 +141,15 @@ the officially supported boards that also support MCU boot:
 See board support information an [Zephyr Project
 docs](https://docs.zephyrproject.org/latest/boards/espressif/esp32_ethernet_kit/doc/index.html).
 
-This is the first board that we use as a reference given the convenience of the ethernet port
-and the low price of the first generation ESP32. We will add more boards in the near future.
+This board is very convinient due to the ethernet port
+and the low price of the first generation ESP32.
 
 To build the reference project for ESP32-Ethernet-Kit, execute:
 ```
-west build --board esp32_ethernet_kit/esp32/procpu mender-mcu-integration
+west build \
+  --sysbuild \
+  --board esp32_ethernet_kit/esp32/procpu  \
+  mender-mcu-integration
 ```
 
 Flash it now to the board and read the serial line with something like:
@@ -67,46 +157,26 @@ Flash it now to the board and read the serial line with something like:
 west flash &&  minicom -D /dev/ttyUSB1 -b 115200 -w
 ```
 
-### ESP32-S3-DevKitC
-
-To build the reference project for ESP32-Ethernet-Kit, execute:
-```
-west build -b esp32s3_devkitc/esp32s3/procpu mender-mcu-integration -- -DEXTRA_CONF_FILE=overlay-wifi.conf
-```
-
-Flash it now to the board and read the serial line with something like:
-```
-west flash && west espressif monitor
-```
-
 ### Olimex ESP32-EVB
 
 See board support information an [Zephyr Project
 docs](https://docs.zephyrproject.org/latest/boards/olimex/olimex_esp32_evb/doc/index.html).
+
 The board doesn't come with Ethernet support in the upstream
 [Zephyr 3.7 board integrations](https://github.com/zephyrproject-rtos/zephyr/tree/v3.7.0/boards/olimex/olimex_esp32_evb),
 but this repository ships a device tree overlay adding the necessary bits.
 
 To build the reference project for Olimex ESP32-EVB, execute:
 ```
-west build --board olimex_esp32_evb/esp32/procpu mender-mcu-integration
+west build \
+  --sysbuild \
+  --board olimex_esp32_evb/esp32/procpu  \
+  mender-mcu-integration
 ```
 
 Flash it now to the board and read the serial line with something like:
 ```
 west flash && west espressif monitor
-```
-
-### NXP MR-CANHUBK3
-
-*WARNING*: this board does not support MCUBoot, so the default "zephyr-image" Update Module is not
-compiled in. To make it actually perform an update an Update Module needs to be written. The
-"noop-update" from this repository is compiled in as a way to get started but, as the name shows,
-this update module does nothing.
-
-To build the reference project for NXP MR-CANHUBK3, execute:
-```
-west build --board mr_canhubk3 mender-mcu-integration
 ```
 
 ### Native simulator
@@ -126,35 +196,70 @@ To build the reference project for native_sim, execute:
 ```
 west build --board native_sim mender-mcu-integration
 ```
+
 Then you can run the binary with:
 ```
 ./build/zephyr/zephyr.exe
 ```
+
 or
 ```
 west build -t run
 ```
 
-## First time board setup
+### Using on-premise demo Mender Server
 
-For the first time of using the board, you need to build and flash the bootloader. It can either be
-done by:
+To run the Native Simulator with on-premise Mender Server:
 
-* Using `--sysbuild` option in your `west build`. Read the docs [here](https://docs.zephyrproject.org/latest/build/sysbuild/index.html).
-* Building and flashing the bootloader alone following [this guide](https://docs.mcuboot.com/readme-zephyr)
+1. Follow instructions from [mender-server](https://github.com/mendersoftware/mender-server) to start the server
 
-Additionally, you might want to erase the whole flash so that the storage partition is clean. Use
-`python -m esptool --chip esp32 erase_flash` for that. Find the vendor documentation
-[here](https://docs.espressif.com/projects/esptool/en/latest/esp32/esptool/basic-commands.html#erase-flash-erase-flash-erase-region)
+2. Copy and convert the demo certificate for docker.mender.io
+    ```
+    wget https://raw.githubusercontent.com/mendersoftware/mender-server/main/compose/certs/mender.crt
+    openssl x509 -in mender.crt -outform der -out mender.der
+    ```
 
-## Creating the Mender Artifact
+3. Add the following Kconfig parameters to your build:
+    ```
+    CONFIG_MENDER_SERVER_HOST_ON_PREM=y
+    CONFIG_MENDER_SERVER_HOST="https://docker.mender.io"
+    CONFIG_MENDER_APP_SERVER_HOST_ON_PREM_CERT="mender.der"
+    CONFIG_DNS_SERVER_IP_ADDRESSES=y
+    CONFIG_DNS_SERVER1="192.0.2.2:15353"
+    ```
+
+4. Start networking with  `net-setup.sh`
+
+5. Start the DNS and DHCP servers with `dnsmasq`
+    ```
+    cat << EOF > dnsmasq.conf
+    # Config for Mender Demo Server DNS and DHCPv4
+    interface=zeth
+
+    port=15353
+    bind-interfaces
+    no-resolv
+
+    address=/docker.mender.io/192.0.2.2
+    dhcp-range=192.0.2.16,192.0.2.32,1h
+    EOF
+    sudo dnsmasq -C dnsmasq.conf -d
+    ```
+
+6. Launch the Mender MCU client \o/
+
+    ```
+    west build -t run
+    ```
+
+## Manually creating the Mender Artifact
 
 Create an Artifact (remember to disable compression):
 
 ```
 mender-artifact write module-image \
   --type zephyr-image \
-  --file build/zephyr/zephyr.signed.bin \
+  --file build/mender-mcu-integration/zephyr/zephyr.signed.bin \
   --compression none \
   --artifact-name <artifact_name> \
   --device-type <device_type>

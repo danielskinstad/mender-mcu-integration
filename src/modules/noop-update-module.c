@@ -12,10 +12,11 @@
 //    See the License for the specific language governing permissions and
 //    limitations under the License.
 
-#include "mender-client.h"
-#include "mender-log.h"
-#include "mender-utils.h"
-#include "mender-update-module.h"
+#include <mender/alloc.h>
+#include <mender/client.h>
+#include <mender/log.h>
+#include <mender/utils.h>
+#include <mender/update-module.h>
 
 static mender_err_t noop_update_module_download(mender_update_state_t state, mender_update_state_data_t callback_data);
 
@@ -31,7 +32,7 @@ noop_update_module_register(void) {
     mender_update_module_t *noop_update_module;
 
     /* Register the zephyr-image update module */
-    if (NULL == (noop_update_module = calloc(1, sizeof(mender_update_module_t)))) {
+    if (NULL == (noop_update_module = mender_calloc(1, sizeof(mender_update_module_t)))) {
         mender_log_error("Unable to allocate memory for the 'zephyr-image' update module");
         return MENDER_FAIL;
     }
@@ -47,9 +48,9 @@ noop_update_module_register(void) {
     noop_update_module->requires_reboot                                = false;
     noop_update_module->supports_rollback                              = false;
 
-    if (MENDER_OK != (ret = mender_client_register_update_module(noop_update_module))) {
+    if (MENDER_OK != (ret = mender_update_module_register(noop_update_module))) {
         mender_log_error("Unable to register the 'noop-update' update module");
-        /* mender_client_register_update_module() takes ownership if it succeeds */
+        /* mender_update_module_register() takes ownership if it succeeds */
         free(noop_update_module);
         return ret;
     }

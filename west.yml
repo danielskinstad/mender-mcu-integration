@@ -9,11 +9,18 @@ manifest:
   projects:
     - name: zephyr
       remote: zephyrproject-rtos
-      revision: v3.7.0
-      import: true
+      revision: v4.0.0
+      import:
+        name-allowlist:
+          - cmsis
+          - mbedtls
+          - mcuboot
+          - hal_nxp
+          - hal_nordic
+          - hal_espressif
     - name: mender-mcu
       remote: mender
-      revision: v0.2-update-modules
+      revision: main
       path: modules/mender-mcu
       import: true
 
